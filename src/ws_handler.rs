@@ -28,6 +28,9 @@ pub struct SpawnParams {
     pub rows: u16,
     #[serde(default)]
     pub mode: SpawnMode,
+    /// Required when `mode=resume`; ignored otherwise.
+    #[serde(default)]
+    pub sid: Option<String>,
 }
 
 fn default_cols() -> u16 {
@@ -69,8 +72,9 @@ pub async fn handle(socket: WebSocket, params: SpawnParams) {
     let cols = params.cols;
     let rows = params.rows;
     let mode = params.mode;
+    let sid = params.sid.clone();
     let session_res = tokio::task::spawn_blocking(move || {
-        spawn_for_profile(&spawn_prof, cols, rows, mode)
+        spawn_for_profile(&spawn_prof, cols, rows, mode, sid.as_deref())
     })
     .await;
 

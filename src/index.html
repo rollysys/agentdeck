@@ -143,6 +143,64 @@
   }
   .btn.primary:hover { background: #263b2c; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.mini {
+    padding: 3px 10px;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+
+  /* session history panel */
+  .history {
+    margin-top: 6px;
+    padding: 6px 0 2px;
+    border-top: 1px dashed var(--border);
+    display: none;
+  }
+  .history.open { display: block; }
+  .history .hint {
+    color: var(--muted);
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 4px 2px 8px;
+  }
+  .history .sess {
+    display: grid;
+    grid-template-columns: 88px 56px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 5px 2px;
+    border-bottom: 1px solid #1a1e27;
+    font-size: 12px;
+  }
+  .history .sess:last-child { border-bottom: none; }
+  .history .sess .when {
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+  }
+  .history .sess .turns {
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    text-align: right;
+  }
+  .history .sess .prompt {
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .history .sess .prompt.empty {
+    color: #4c5462;
+    font-style: italic;
+  }
+  .history .empty-state {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 10px 4px;
+    text-align: center;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
   footer {
     padding: 14px 28px 22px;
     color: #4c5462;
@@ -201,10 +259,11 @@
   <div id="content"></div>
 </main>
 <footer>
-  <b>continue</b> resumes the most recent session in the profile's cwd
-  (claude/hermes/qwen: <code>--continue</code>; codex: <code>resume --last</code>).
-  <b>new</b> starts fresh. Closing the panel sends SIGHUP — no
-  cross-close persistence yet (tmux-backed mode planned).
+  <b>continue</b> resumes the most recent session in the profile's cwd.
+  <b>new</b> starts fresh. <b>history</b> expands the full session list
+  scoped to this profile (click <b>resume</b> on a row to open that
+  specific session). Closing the panel sends SIGHUP — no cross-close
+  persistence yet (tmux-backed mode planned).
 </footer>
 
 <div id="overlay">
@@ -307,11 +366,108 @@ function card(p) {
   const fresh = el('button', 'btn', 'new');
   fresh.title = 'start a fresh agent session';
   fresh.onclick = () => openTerminal(p, 'new');
+  const hist = el('button', 'btn', 'history');
+  hist.title = 'browse past sessions scoped to this profile';
   actions.appendChild(cont);
   actions.appendChild(fresh);
+  actions.appendChild(hist);
   c.appendChild(actions);
 
+  const panel = el('div', 'history');
+  c.appendChild(panel);
+  hist.onclick = () => toggleHistory(p, panel, hist);
+
   return c;
+}
+
+async function toggleHistory(profile, panel, btn) {
+  if (panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    btn.textContent = 'history';
+    return;
+  }
+  panel.classList.add('open');
+  btn.textContent = 'hide';
+  await renderHistory(profile, panel);
+}
+
+async function renderHistory(profile, panel) {
+  panel.innerHTML = '';
+  panel.appendChild(el('div', 'hint', 'loading…'));
+
+  let data;
+  try {
+    const r = await fetch(
+      '/api/sessions?profile=' + encodeURIComponent(profile.name)
+    );
+    if (r.status === 503) {
+      panel.innerHTML = '';
+      panel.appendChild(el('div', 'hint', 'indexing sessions… retry in a few seconds'));
+      return;
+    }
+    if (!r.ok) {
+      panel.innerHTML = '';
+      panel.appendChild(el('div', 'hint', `/api/sessions → HTTP ${r.status}`));
+      return;
+    }
+    data = await r.json();
+  } catch (e) {
+    panel.innerHTML = '';
+    panel.appendChild(el('div', 'hint', 'fetch failed: ' + e));
+    return;
+  }
+
+  panel.innerHTML = '';
+
+  if (!data.cwd_scoped) {
+    panel.appendChild(el('div', 'hint',
+      `hermes sessions are global (not cwd-scoped). showing ${data.considered} session(s) across all cwds.`));
+  } else {
+    panel.appendChild(el('div', 'hint',
+      `${data.sessions.length} of ${data.considered} session(s) in ${profile.cwd}`));
+  }
+
+  if (!data.sessions.length) {
+    const note = data.considered === 0
+      ? `no ${profile.agent} sessions indexed yet`
+      : 'no sessions match this cwd — resume-by-history not available';
+    panel.appendChild(el('div', 'empty-state', note));
+    return;
+  }
+
+  for (const s of data.sessions) {
+    panel.appendChild(sessionRow(profile, s));
+  }
+}
+
+function sessionRow(profile, s) {
+  const row = el('div', 'sess');
+  row.appendChild(el('span', 'when', formatTs(s.last_active_ts)));
+  row.appendChild(el('span', 'turns', `${s.turns}t`));
+  const prompt = el('span', 'prompt');
+  if (s.prompt && s.prompt.trim()) {
+    prompt.textContent = s.prompt.trim().replace(/\s+/g, ' ');
+  } else {
+    prompt.classList.add('empty');
+    prompt.textContent = '(no prompt)';
+  }
+  prompt.title = s.sid;
+  row.appendChild(prompt);
+  const btn = el('button', 'btn mini primary', 'resume');
+  btn.title = 'resume this specific session';
+  btn.onclick = () => openTerminal(profile, 'resume', s.sid);
+  row.appendChild(btn);
+  return row;
+}
+
+function formatTs(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
 }
 
 function row(k, v) {
@@ -325,13 +481,16 @@ function row(k, v) {
 
 let activeSession = null;
 
-function openTerminal(profile, mode) {
+function openTerminal(profile, mode, sid) {
   if (activeSession) activeSession.dispose();
 
   const overlay = document.getElementById('overlay');
   const termEl = document.getElementById('term');
+  const label = mode === 'resume' && sid
+    ? `${mode}:${sid.slice(0, 8)}`
+    : mode;
   document.getElementById('overlayTitle').textContent =
-    `${profile.name} · ${profile.agent} · ${mode} · ${profile.cwd}`;
+    `${profile.name} · ${profile.agent} · ${label} · ${profile.cwd}`;
   const state = document.getElementById('overlayState');
   state.textContent = 'connecting…';
 
@@ -355,6 +514,7 @@ function openTerminal(profile, mode) {
   url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('profile', profile.name);
   url.searchParams.set('mode', mode);
+  if (mode === 'resume' && sid) url.searchParams.set('sid', sid);
   url.searchParams.set('cols', String(term.cols));
   url.searchParams.set('rows', String(term.rows));
 

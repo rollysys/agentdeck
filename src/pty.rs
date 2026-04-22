@@ -23,6 +23,11 @@ pub enum SpawnMode {
     ///   claude / hermes / qwen  → `--continue`
     ///   codex                    → subcommand `resume --last`
     Continue,
+    /// Resume a specific session id (supplied out-of-band via the `sid`
+    /// query parameter).
+    ///   claude / qwen / hermes  → `--resume <sid>`
+    ///   codex                    → subcommand `resume <sid>`
+    Resume,
 }
 
 pub struct PtySession {
@@ -37,16 +42,29 @@ pub struct PtySession {
 }
 
 /// Returns (command, args) for launching `agent` in `mode`.
-fn resolve_command(agent: AgentKind, mode: SpawnMode) -> (&'static str, &'static [&'static str]) {
+/// `sid` is required when `mode == SpawnMode::Resume`, ignored otherwise.
+fn resolve_command(
+    agent: AgentKind,
+    mode: SpawnMode,
+    sid: Option<&str>,
+) -> (&'static str, Vec<String>) {
+    let empty = || Vec::<String>::new();
+    let s = || sid.unwrap_or_default().to_string();
     match (agent, mode) {
-        (AgentKind::Claude, SpawnMode::New) => ("claude", &[]),
-        (AgentKind::Claude, SpawnMode::Continue) => ("claude", &["--continue"]),
-        (AgentKind::Hermes, SpawnMode::New) => ("hermes", &[]),
-        (AgentKind::Hermes, SpawnMode::Continue) => ("hermes", &["--continue"]),
-        (AgentKind::Qwen, SpawnMode::New) => ("qwen", &[]),
-        (AgentKind::Qwen, SpawnMode::Continue) => ("qwen", &["--continue"]),
-        (AgentKind::Codex, SpawnMode::New) => ("codex", &[]),
-        (AgentKind::Codex, SpawnMode::Continue) => ("codex", &["resume", "--last"]),
+        (AgentKind::Claude, SpawnMode::New) => ("claude", empty()),
+        (AgentKind::Claude, SpawnMode::Continue) => ("claude", vec!["--continue".into()]),
+        (AgentKind::Claude, SpawnMode::Resume) => ("claude", vec!["--resume".into(), s()]),
+        (AgentKind::Hermes, SpawnMode::New) => ("hermes", empty()),
+        (AgentKind::Hermes, SpawnMode::Continue) => ("hermes", vec!["--continue".into()]),
+        (AgentKind::Hermes, SpawnMode::Resume) => ("hermes", vec!["--resume".into(), s()]),
+        (AgentKind::Qwen, SpawnMode::New) => ("qwen", empty()),
+        (AgentKind::Qwen, SpawnMode::Continue) => ("qwen", vec!["--continue".into()]),
+        (AgentKind::Qwen, SpawnMode::Resume) => ("qwen", vec!["--resume".into(), s()]),
+        (AgentKind::Codex, SpawnMode::New) => ("codex", empty()),
+        (AgentKind::Codex, SpawnMode::Continue) => {
+            ("codex", vec!["resume".into(), "--last".into()])
+        }
+        (AgentKind::Codex, SpawnMode::Resume) => ("codex", vec!["resume".into(), s()]),
     }
 }
 
@@ -55,7 +73,12 @@ pub fn spawn_for_profile(
     cols: u16,
     rows: u16,
     mode: SpawnMode,
+    sid: Option<&str>,
 ) -> anyhow::Result<PtySession> {
+    if mode == SpawnMode::Resume && sid.filter(|s| !s.is_empty()).is_none() {
+        anyhow::bail!("resume mode requires a non-empty `sid` query parameter");
+    }
+
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
         rows,
@@ -64,9 +87,9 @@ pub fn spawn_for_profile(
         pixel_height: 0,
     })?;
 
-    let (program, args) = resolve_command(p.agent, mode);
+    let (program, args) = resolve_command(p.agent, mode, sid);
     let mut cmd = CommandBuilder::new(program);
-    for a in args {
+    for a in &args {
         cmd.arg(a);
     }
     cmd.cwd(&p.cwd);
@@ -96,16 +119,32 @@ mod tests {
     #[test]
     fn continue_flags_per_agent() {
         assert_eq!(
-            resolve_command(AgentKind::Claude, SpawnMode::Continue),
-            ("claude", &["--continue"] as &[_])
+            resolve_command(AgentKind::Claude, SpawnMode::Continue, None),
+            ("claude", vec!["--continue".to_string()])
         );
         assert_eq!(
-            resolve_command(AgentKind::Codex, SpawnMode::Continue),
-            ("codex", &["resume", "--last"] as &[_])
+            resolve_command(AgentKind::Codex, SpawnMode::Continue, None),
+            ("codex", vec!["resume".into(), "--last".into()])
         );
         assert_eq!(
-            resolve_command(AgentKind::Qwen, SpawnMode::New),
-            ("qwen", &[] as &[_])
+            resolve_command(AgentKind::Qwen, SpawnMode::New, None),
+            ("qwen", Vec::<String>::new())
+        );
+    }
+
+    #[test]
+    fn resume_flags_per_agent() {
+        assert_eq!(
+            resolve_command(AgentKind::Claude, SpawnMode::Resume, Some("abc123")),
+            ("claude", vec!["--resume".into(), "abc123".into()])
+        );
+        assert_eq!(
+            resolve_command(AgentKind::Codex, SpawnMode::Resume, Some("ulid")),
+            ("codex", vec!["resume".into(), "ulid".into()])
+        );
+        assert_eq!(
+            resolve_command(AgentKind::Hermes, SpawnMode::Resume, Some("20260422_x")),
+            ("hermes", vec!["--resume".into(), "20260422_x".into()])
         );
     }
 }
