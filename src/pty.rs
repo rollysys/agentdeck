@@ -68,12 +68,27 @@ fn resolve_command(
     }
 }
 
+/// Whether the UI should let users click "launch" on a skill for this
+/// agent. Claude is included even though its CLI has no `--skills`
+/// flag — we inject `/skill-name` into stdin after spawn instead
+/// (see `ws_handler`).
+pub fn supports_skill_launch(agent: AgentKind) -> bool {
+    matches!(agent, AgentKind::Claude | AgentKind::Hermes)
+}
+
+/// Whether this agent accepts `--skills <name>` at the CLI. Only hermes.
+/// For claude we use stdin injection; for qwen / codex we do nothing.
+fn supports_skill_flag(agent: AgentKind) -> bool {
+    matches!(agent, AgentKind::Hermes)
+}
+
 pub fn spawn_for_profile(
     p: &Profile,
     cols: u16,
     rows: u16,
     mode: SpawnMode,
     sid: Option<&str>,
+    skill: Option<&str>,
 ) -> anyhow::Result<PtySession> {
     if mode == SpawnMode::Resume && sid.filter(|s| !s.is_empty()).is_none() {
         anyhow::bail!("resume mode requires a non-empty `sid` query parameter");
@@ -87,7 +102,24 @@ pub fn spawn_for_profile(
         pixel_height: 0,
     })?;
 
-    let (program, args) = resolve_command(p.agent, mode, sid);
+    let (program, mut args) = resolve_command(p.agent, mode, sid);
+    if let Some(name) = skill.filter(|s| !s.is_empty()) {
+        if supports_skill_flag(p.agent) {
+            // hermes: native flag
+            args.push("--skills".into());
+            args.push(name.into());
+        } else if matches!(p.agent, AgentKind::Claude) {
+            // claude: has no `--skills` flag, but accepts a positional
+            // `[prompt]` arg that becomes the first user message. The
+            // TUI treats a message starting with `/` as a slash command,
+            // so `claude "/pdca"` is equivalent to the user opening
+            // claude and immediately typing `/pdca`.
+            args.push(format!("/{name}"));
+        }
+        // qwen / codex: no equivalent, UI keeps the launch button
+        // disabled so we never get here for them.
+    }
+
     let mut cmd = CommandBuilder::new(program);
     for a in &args {
         cmd.arg(a);
@@ -146,5 +178,24 @@ mod tests {
             resolve_command(AgentKind::Hermes, SpawnMode::Resume, Some("20260422_x")),
             ("hermes", vec!["--resume".into(), "20260422_x".into()])
         );
+    }
+
+    #[test]
+    fn skill_launch_support_table() {
+        // UI-visible: claude + hermes both get launch buttons.
+        assert!(supports_skill_launch(AgentKind::Claude));
+        assert!(supports_skill_launch(AgentKind::Hermes));
+        assert!(!supports_skill_launch(AgentKind::Qwen));
+        assert!(!supports_skill_launch(AgentKind::Codex));
+    }
+
+    #[test]
+    fn only_hermes_uses_skill_cli_flag() {
+        // Internal: only hermes has a real `--skills` flag. Claude's
+        // launch path is stdin injection of `/skill-name`.
+        assert!(supports_skill_flag(AgentKind::Hermes));
+        assert!(!supports_skill_flag(AgentKind::Claude));
+        assert!(!supports_skill_flag(AgentKind::Qwen));
+        assert!(!supports_skill_flag(AgentKind::Codex));
     }
 }

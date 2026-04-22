@@ -5,6 +5,7 @@
 mod profile;
 mod pty;
 mod sessions;
+mod skills;
 mod ws_handler;
 
 use axum::{
@@ -31,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(index))
         .route("/api/profiles", get(profiles))
         .route("/api/sessions", get(sessions_handler))
+        .route("/api/skills", get(skills_handler))
         .route("/ws/spawn", get(ws_spawn))
         .with_state(idx);
 
@@ -75,6 +77,21 @@ async fn sessions_handler(
     }
 
     Ok(Json(idx.for_profile(prof).await))
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsQuery {
+    profile: String,
+}
+
+async fn skills_handler(
+    Query(q): Query<SkillsQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let report = profile::load();
+    let Some(prof) = report.profiles.iter().find(|p| p.name == q.profile) else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    Ok(Json(skills::for_profile(prof)))
 }
 
 async fn ws_spawn(

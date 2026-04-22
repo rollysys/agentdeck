@@ -31,6 +31,11 @@ pub struct SpawnParams {
     /// Required when `mode=resume`; ignored otherwise.
     #[serde(default)]
     pub sid: Option<String>,
+    /// Optional skill to preload at launch. Honored for claude / hermes
+    /// via `--skills <name>`; silently ignored for qwen / codex (they
+    /// don't expose an equivalent flag).
+    #[serde(default)]
+    pub skill: Option<String>,
 }
 
 fn default_cols() -> u16 {
@@ -73,8 +78,16 @@ pub async fn handle(socket: WebSocket, params: SpawnParams) {
     let rows = params.rows;
     let mode = params.mode;
     let sid = params.sid.clone();
+    let skill = params.skill.clone();
     let session_res = tokio::task::spawn_blocking(move || {
-        spawn_for_profile(&spawn_prof, cols, rows, mode, sid.as_deref())
+        spawn_for_profile(
+            &spawn_prof,
+            cols,
+            rows,
+            mode,
+            sid.as_deref(),
+            skill.as_deref(),
+        )
     })
     .await;
 
@@ -132,6 +145,12 @@ pub async fn handle(socket: WebSocket, params: SpawnParams) {
             }
         }
     });
+
+    // Skill preload is wired entirely through spawn args in `pty.rs`:
+    //   hermes → native `--skills <name>` flag
+    //   claude → positional `[prompt]` arg `/skill-name` (claude's TUI
+    //            dispatches messages starting with `/` as slash commands)
+    //   qwen / codex → no equivalent; UI keeps the launch button disabled.
 
     loop {
         tokio::select! {

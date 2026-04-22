@@ -116,9 +116,23 @@
     background: #1d2330;
     border: 1px solid var(--border);
     color: var(--muted);
-    padding: 2px 6px;
+    padding: 2px 8px;
     border-radius: 3px;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .skill.launchable {
+    cursor: pointer;
+    color: #9ec7ae;
+    border-color: #2e4a3a;
+    background: #1a2620;
+  }
+  .skill.launchable:hover {
+    background: #233528;
+    color: #bfe0ce;
+  }
+  .skill.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .actions {
     display: flex;
@@ -201,6 +215,56 @@
     text-align: center;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
   }
+
+  /* skills panel */
+  .skill-panel {
+    margin-top: 6px;
+    padding: 6px 0 2px;
+    border-top: 1px dashed var(--border);
+    display: none;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .skill-panel.open { display: block; }
+  .skill-panel .hint {
+    color: var(--muted);
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    padding: 4px 2px 8px;
+  }
+  .skill-panel .row2 {
+    display: grid;
+    grid-template-columns: 16px 1fr auto;
+    gap: 8px;
+    align-items: start;
+    padding: 6px 2px;
+    border-bottom: 1px solid #1a1e27;
+  }
+  .skill-panel .row2:last-child { border-bottom: none; }
+  .skill-panel .pin {
+    color: var(--accent);
+    font-size: 13px;
+    line-height: 1.3;
+    text-align: center;
+  }
+  .skill-panel .pin.empty { color: transparent; }
+  .skill-panel .skill-name {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .skill-panel .skill-desc {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+    line-height: 1.4;
+  }
+  .skill-panel .missing {
+    color: var(--err);
+    font-size: 11px;
+    padding: 6px 2px 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
   footer {
     padding: 14px 28px 22px;
     color: #4c5462;
@@ -259,11 +323,13 @@
   <div id="content"></div>
 </main>
 <footer>
-  <b>continue</b> resumes the most recent session in the profile's cwd.
-  <b>new</b> starts fresh. <b>history</b> expands the full session list
-  scoped to this profile (click <b>resume</b> on a row to open that
-  specific session). Closing the panel sends SIGHUP — no cross-close
-  persistence yet (tmux-backed mode planned).
+  <b>continue</b> resumes the most recent session. <b>new</b> starts
+  fresh. <b>history</b> lists past sessions (cwd-scoped).
+  <b>skills</b> lists this agent's installed skills — ★ means the
+  name is pinned in <code>profile.skills</code>; <code>launch</code>
+  starts a fresh session with <code>--skills &lt;name&gt;</code>
+  (claude / hermes only — qwen / codex have no equivalent flag).
+  Closing the overlay sends SIGHUP — no cross-close persistence yet.
 </footer>
 
 <div id="overlay">
@@ -294,8 +360,9 @@ const SAMPLE_YAML = `profiles:
     cwd: /Users/you/auditit/auditit-tui
     agent: claude          # claude | codex | qwen | hermes
     model: opus            # optional
-    skills: []             # optional (preload, P3+)
-    env: {}                # optional (extra env vars)`;
+    skills:                # optional — pins these skills in the panel
+      - study              #   (still see all installed skills regardless)
+    env: {}                # optional — extra env vars`;
 
 async function loadProfiles() {
   const status = document.getElementById('status');
@@ -351,11 +418,6 @@ function card(p) {
 
   c.appendChild(row('cwd', p.cwd));
   if (p.model) c.appendChild(row('model', p.model));
-  if (p.skills && p.skills.length) {
-    const list = el('div', 'skills');
-    for (const s of p.skills) list.appendChild(el('span', 'skill', s));
-    c.appendChild(list);
-  }
   const envKeys = Object.keys(p.env || {});
   if (envKeys.length) c.appendChild(row('env', envKeys.join(', ')));
 
@@ -368,14 +430,21 @@ function card(p) {
   fresh.onclick = () => openTerminal(p, 'new');
   const hist = el('button', 'btn', 'history');
   hist.title = 'browse past sessions scoped to this profile';
+  const sk = el('button', 'btn', 'skills');
+  sk.title = `list installed skills for ${p.agent}`;
   actions.appendChild(cont);
   actions.appendChild(fresh);
   actions.appendChild(hist);
+  actions.appendChild(sk);
   c.appendChild(actions);
 
-  const panel = el('div', 'history');
-  c.appendChild(panel);
-  hist.onclick = () => toggleHistory(p, panel, hist);
+  const histPanel = el('div', 'history');
+  c.appendChild(histPanel);
+  hist.onclick = () => toggleHistory(p, histPanel, hist);
+
+  const skPanel = el('div', 'skill-panel');
+  c.appendChild(skPanel);
+  sk.onclick = () => toggleSkills(p, skPanel, sk);
 
   return c;
 }
@@ -470,6 +539,82 @@ function formatTs(ts) {
   return `${mm}-${dd} ${hh}:${mi}`;
 }
 
+// -- skills panel ----------------------------------------------------------
+
+async function toggleSkills(profile, panel, btn) {
+  if (panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    btn.textContent = 'skills';
+    return;
+  }
+  panel.classList.add('open');
+  btn.textContent = 'hide';
+  await renderSkills(profile, panel);
+}
+
+async function renderSkills(profile, panel) {
+  panel.innerHTML = '';
+  panel.appendChild(el('div', 'hint', 'loading…'));
+
+  let data;
+  try {
+    const r = await fetch(
+      '/api/skills?profile=' + encodeURIComponent(profile.name)
+    );
+    if (!r.ok) {
+      panel.innerHTML = '';
+      panel.appendChild(el('div', 'hint', `/api/skills → HTTP ${r.status}`));
+      return;
+    }
+    data = await r.json();
+  } catch (e) {
+    panel.innerHTML = '';
+    panel.appendChild(el('div', 'hint', 'fetch failed: ' + e));
+    return;
+  }
+
+  panel.innerHTML = '';
+
+  const hintTxt = data.preload_supported
+    ? `${data.skills.length} skill(s) from ${data.skills_dir} — click launch to preload via --skills`
+    : `${data.skills.length} skill(s) from ${data.skills_dir} — ${data.agent} has no --skills flag, launch disabled`;
+  panel.appendChild(el('div', 'hint', hintTxt));
+
+  if (!data.skills.length) {
+    panel.appendChild(el('div', 'empty-state', 'no skills installed'));
+  } else {
+    for (const s of data.skills) panel.appendChild(skillRow(profile, s, data.preload_supported));
+  }
+
+  if (data.missing_pinned && data.missing_pinned.length) {
+    const m = el('div', 'missing',
+      'profile.skills references skill(s) not found on disk: ' +
+      data.missing_pinned.join(', '));
+    panel.appendChild(m);
+  }
+}
+
+function skillRow(profile, s, launchable) {
+  const r = el('div', 'row2');
+  r.appendChild(el('span', 'pin' + (s.pinned ? '' : ' empty'), s.pinned ? '★' : ''));
+
+  const mid = el('div');
+  mid.appendChild(el('div', 'skill-name', s.name));
+  if (s.description) mid.appendChild(el('div', 'skill-desc', s.description));
+  r.appendChild(mid);
+
+  const btn = el('button', 'btn mini' + (launchable ? ' primary' : ''), 'launch');
+  if (launchable) {
+    btn.title = `new ${profile.agent} session with --skills ${s.name}`;
+    btn.onclick = () => openTerminal(profile, 'new', {skill: s.name});
+  } else {
+    btn.disabled = true;
+    btn.title = `${profile.agent} has no --skills preload flag`;
+  }
+  r.appendChild(btn);
+  return r;
+}
+
 function row(k, v) {
   const r = el('div', 'row');
   r.appendChild(el('span', 'k', k));
@@ -481,14 +626,24 @@ function row(k, v) {
 
 let activeSession = null;
 
-function openTerminal(profile, mode, sid) {
+function openTerminal(profile, mode, optsOrSid) {
+  // Backwards-compatible signature: older callers passed a bare sid as the
+  // third argument. Newer skill-aware callers pass {sid?, skill?}.
+  let sid, skill;
+  if (typeof optsOrSid === 'string' || optsOrSid === undefined) {
+    sid = optsOrSid;
+  } else {
+    sid = optsOrSid.sid;
+    skill = optsOrSid.skill;
+  }
+
   if (activeSession) activeSession.dispose();
 
   const overlay = document.getElementById('overlay');
   const termEl = document.getElementById('term');
-  const label = mode === 'resume' && sid
-    ? `${mode}:${sid.slice(0, 8)}`
-    : mode;
+  let label = mode;
+  if (mode === 'resume' && sid) label = `${mode}:${sid.slice(0, 8)}`;
+  if (skill) label += `+skill:${skill}`;
   document.getElementById('overlayTitle').textContent =
     `${profile.name} · ${profile.agent} · ${label} · ${profile.cwd}`;
   const state = document.getElementById('overlayState');
@@ -515,6 +670,7 @@ function openTerminal(profile, mode, sid) {
   url.searchParams.set('profile', profile.name);
   url.searchParams.set('mode', mode);
   if (mode === 'resume' && sid) url.searchParams.set('sid', sid);
+  if (skill) url.searchParams.set('skill', skill);
   url.searchParams.set('cols', String(term.cols));
   url.searchParams.set('rows', String(term.rows));
 
