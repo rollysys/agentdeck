@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>agentdeck</title>
+<link rel="stylesheet" href="https://unpkg.com/@xterm/xterm@5.5.0/css/xterm.css">
+<style>
+  :root {
+    --bg: #0e1014;
+    --panel: #161a22;
+    --panel-hi: #1d2330;
+    --border: #242a36;
+    --border-hi: #3a4355;
+    --text: #c8d0e0;
+    --muted: #6b7384;
+    --accent: #b08540;
+    --claude: #b079de;
+    --codex: #5d9de6;
+    --qwen:   #3cbd8f;
+    --hermes: #d96ea7;
+    --err:    #d66a6a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Helvetica Neue", Arial, sans-serif;
+  }
+  header {
+    padding: 18px 28px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: 0.02em; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { padding: 22px 28px; }
+  .status {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 18px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .errors {
+    background: #2a1616;
+    border: 1px solid #5a2323;
+    color: var(--err);
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 18px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+  }
+  .empty {
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--muted);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+  }
+  .empty code { color: var(--claude); font-size: 13px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card h2 {
+    margin: 0;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .badge {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    background: #11151d;
+    border: 1px solid transparent;
+  }
+  .badge.claude { color: var(--claude); border-color: #33224a; }
+  .badge.codex  { color: var(--codex);  border-color: #1f2f48; }
+  .badge.qwen   { color: var(--qwen);   border-color: #1a3b30; }
+  .badge.hermes { color: var(--hermes); border-color: #3f2036; }
+  .row {
+    display: flex;
+    gap: 6px;
+    font-size: 12px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--muted);
+  }
+  .row .k { width: 52px; color: #555c6b; }
+  .row .v { color: var(--text); word-break: break-all; }
+  .skills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .skill {
+    font-size: 11px;
+    background: #1d2330;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .btn {
+    cursor: pointer;
+    background: var(--panel-hi);
+    color: var(--text);
+    border: 1px solid var(--border-hi);
+    padding: 6px 14px;
+    border-radius: 5px;
+    font: 600 12px -apple-system, sans-serif;
+    letter-spacing: 0.04em;
+  }
+  .btn:hover { background: #252c3b; }
+  .btn.primary {
+    background: #1e2a22;
+    border-color: #2e4a3a;
+    color: #9ec7ae;
+  }
+  .btn.primary:hover { background: #263b2c; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  footer {
+    padding: 14px 28px 22px;
+    color: #4c5462;
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: none;
+    flex-direction: column;
+    z-index: 10;
+  }
+  #overlay.open { display: flex; }
+  #overlay .bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+  #overlay .bar .title { display: flex; align-items: center; gap: 10px; }
+  #overlay .bar .state { color: var(--muted); }
+  #overlay .bar button {
+    cursor: pointer;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font: 12px ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  #overlay .bar button:hover { background: #1d2330; }
+  #term {
+    flex: 1;
+    padding: 6px 10px 0;
+    overflow: hidden;
+    background: #000;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>agentdeck</h1>
+  <span class="sub">local multi-agent launcher</span>
+</header>
+<main>
+  <div class="status" id="status">loading…</div>
+  <div id="errors"></div>
+  <div id="content"></div>
+</main>
+<footer>
+  <b>continue</b> resumes the most recent session in the profile's cwd
+  (claude/hermes/qwen: <code>--continue</code>; codex: <code>resume --last</code>).
+  <b>new</b> starts fresh. Closing the panel sends SIGHUP — no
+  cross-close persistence yet (tmux-backed mode planned).
+</footer>
+
+<div id="overlay">
+  <div class="bar">
+    <div class="title">
+      <span id="overlayTitle">—</span>
+      <span class="state" id="overlayState">connecting…</span>
+    </div>
+    <button id="overlayClose">close</button>
+  </div>
+  <div id="term"></div>
+</div>
+
+<script src="https://unpkg.com/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<script>
+const el = (tag, cls, txt) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt != null) e.textContent = txt;
+  return e;
+};
+const escapeHtml = s =>
+  s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const SAMPLE_YAML = `profiles:
+  - name: auditui
+    cwd: /Users/you/auditit/auditit-tui
+    agent: claude          # claude | codex | qwen | hermes
+    model: opus            # optional
+    skills: []             # optional (preload, P3+)
+    env: {}                # optional (extra env vars)`;
+
+async function loadProfiles() {
+  const status = document.getElementById('status');
+  const errbox = document.getElementById('errors');
+  const content = document.getElementById('content');
+
+  let data;
+  try {
+    data = await (await fetch('/api/profiles')).json();
+  } catch (e) {
+    status.textContent = 'fetch /api/profiles failed: ' + e;
+    return;
+  }
+
+  status.textContent = `config: ${data.config_path}`;
+
+  if (data.errors && data.errors.length) {
+    errbox.className = 'errors';
+    errbox.textContent = data.errors.join('\n');
+  }
+
+  if (!data.config_exists) {
+    const empty = el('div', 'empty');
+    empty.appendChild(el('div', null, 'no profiles yet'));
+    const p = el('div');
+    p.style.marginTop = '12px';
+    p.innerHTML = 'create <code>' + escapeHtml(data.config_path) + '</code> then reload';
+    empty.appendChild(p);
+    const sample = el('pre');
+    sample.style.cssText = 'margin-top:18px;text-align:left;background:#0a0c10;border:1px solid var(--border);padding:12px;border-radius:6px;font-size:12px';
+    sample.textContent = SAMPLE_YAML;
+    empty.appendChild(sample);
+    content.appendChild(empty);
+    return;
+  }
+
+  if (!data.profiles.length) {
+    content.appendChild(el('div', 'empty', 'config loaded but no valid profiles'));
+    return;
+  }
+
+  const grid = el('div', 'grid');
+  for (const p of data.profiles) grid.appendChild(card(p));
+  content.appendChild(grid);
+}
+
+function card(p) {
+  const c = el('div', 'card');
+  const h = el('h2');
+  h.appendChild(el('span', null, p.name));
+  h.appendChild(el('span', 'badge ' + p.agent, p.agent));
+  c.appendChild(h);
+
+  c.appendChild(row('cwd', p.cwd));
+  if (p.model) c.appendChild(row('model', p.model));
+  if (p.skills && p.skills.length) {
+    const list = el('div', 'skills');
+    for (const s of p.skills) list.appendChild(el('span', 'skill', s));
+    c.appendChild(list);
+  }
+  const envKeys = Object.keys(p.env || {});
+  if (envKeys.length) c.appendChild(row('env', envKeys.join(', ')));
+
+  const actions = el('div', 'actions');
+  const cont = el('button', 'btn primary', 'continue');
+  cont.title = 'resume the most recent session in this cwd';
+  cont.onclick = () => openTerminal(p, 'continue');
+  const fresh = el('button', 'btn', 'new');
+  fresh.title = 'start a fresh agent session';
+  fresh.onclick = () => openTerminal(p, 'new');
+  actions.appendChild(cont);
+  actions.appendChild(fresh);
+  c.appendChild(actions);
+
+  return c;
+}
+
+function row(k, v) {
+  const r = el('div', 'row');
+  r.appendChild(el('span', 'k', k));
+  r.appendChild(el('span', 'v', v));
+  return r;
+}
+
+// -- terminal overlay ------------------------------------------------------
+
+let activeSession = null;
+
+function openTerminal(profile, mode) {
+  if (activeSession) activeSession.dispose();
+
+  const overlay = document.getElementById('overlay');
+  const termEl = document.getElementById('term');
+  document.getElementById('overlayTitle').textContent =
+    `${profile.name} · ${profile.agent} · ${mode} · ${profile.cwd}`;
+  const state = document.getElementById('overlayState');
+  state.textContent = 'connecting…';
+
+  overlay.classList.add('open');
+
+  const term = new Terminal({
+    fontFamily: '"SF Mono", ui-monospace, Menlo, monospace',
+    fontSize: 13,
+    cursorBlink: true,
+    theme: { background: '#000000', foreground: '#e8eaed' },
+    convertEol: false,
+    scrollback: 10000,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(termEl);
+  fit.fit();
+  term.focus();
+
+  const url = new URL('/ws/spawn', location.href);
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('profile', profile.name);
+  url.searchParams.set('mode', mode);
+  url.searchParams.set('cols', String(term.cols));
+  url.searchParams.set('rows', String(term.rows));
+
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+
+  const session = {
+    term, ws, fit,
+    disposed: false,
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      try { ws.close(); } catch {}
+      try { term.dispose(); } catch {}
+      overlay.classList.remove('open');
+    },
+  };
+  activeSession = session;
+
+  ws.onopen = () => {
+    state.textContent = 'connected';
+  };
+
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') {
+      try {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'exit') {
+          term.write('\r\n\x1b[33m[session ended]\x1b[0m\r\n');
+          state.textContent = 'exited';
+        } else if (msg.type === 'error') {
+          term.write(`\r\n\x1b[31m[error: ${msg.message}]\x1b[0m\r\n`);
+          state.textContent = 'error';
+        }
+      } catch {
+        /* non-JSON text frame — ignore */
+      }
+    } else {
+      term.write(new Uint8Array(ev.data));
+    }
+  };
+
+  ws.onclose = () => {
+    if (state.textContent !== 'exited' && state.textContent !== 'error') {
+      state.textContent = 'disconnected';
+    }
+  };
+
+  ws.onerror = () => {
+    state.textContent = 'ws error';
+  };
+
+  const encoder = new TextEncoder();
+  term.onData(data => {
+    if (ws.readyState === 1) ws.send(encoder.encode(data));
+  });
+
+  term.onResize(({cols, rows}) => {
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({type: 'resize', cols, rows}));
+    }
+  });
+
+  const onWinResize = () => { try { fit.fit(); } catch {} };
+  window.addEventListener('resize', onWinResize);
+
+  document.getElementById('overlayClose').onclick = () => {
+    window.removeEventListener('resize', onWinResize);
+    session.dispose();
+  };
+}
+
+loadProfiles();
+</script>
+</body>
+</html>
