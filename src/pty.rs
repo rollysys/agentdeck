@@ -103,6 +103,18 @@ pub fn spawn_for_profile(
     })?;
 
     let (program, mut args) = resolve_command(p.agent, mode, sid);
+
+    // Claude defaults to interactive permission prompts on every tool
+    // call. For agentdeck we want fewer interruptions — `--permission-mode
+    // auto` lets claude's built-in classifier decide which calls still
+    // need explicit approval. Applies to new / continue / resume alike,
+    // and goes before any positional `[prompt]` arg appended below.
+    if matches!(p.agent, AgentKind::Claude) {
+        let mut withdef = vec!["--permission-mode".into(), "auto".into()];
+        withdef.extend(args);
+        args = withdef;
+    }
+
     if let Some(name) = skill.filter(|s| !s.is_empty()) {
         if supports_skill_flag(p.agent) {
             // hermes: native flag
