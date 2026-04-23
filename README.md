@@ -20,21 +20,47 @@ telemetry. Binds `127.0.0.1:7860` only.
 
 ## Install
 
-Needs Rust (stable ≥ 1.77).
+### Prebuilt binary (macOS aarch64, Linux x86_64)
 
 ```bash
-cargo install --git https://github.com/rollysys/agentdeck
+curl -fsSL https://raw.githubusercontent.com/rollysys/agentdeck/main/install.sh | bash
 agentdeck          # starts on http://127.0.0.1:7860
 ```
 
-Or build from source:
+The script downloads the latest GitHub Release tarball, verifies its
+SHA-256, and installs `agentdeck` to `~/.local/bin/` (override with
+`PREFIX=...`). Other platforms — Intel Mac, Linux ARM — need the
+"build from source" path below.
+
+### From source (any platform with Rust ≥ 1.77)
 
 ```bash
+cargo install --git https://github.com/rollysys/agentdeck
+# or, for hacking:
 git clone https://github.com/rollysys/agentdeck
 cd agentdeck
 cargo build --release
 ./target/release/agentdeck
 ```
+
+### Linux server (remote dev workstation)
+
+agentdeck binds `127.0.0.1:7860` only. To use it from your laptop's
+browser when agentdeck runs on a remote server:
+
+```bash
+# on the server
+agentdeck
+
+# on your laptop, in another terminal
+ssh -L 7860:127.0.0.1:7860 your-server
+# then open http://127.0.0.1:7860 in your local browser
+```
+
+**Don't expose `0.0.0.0`.** `/ws/spawn` lets anyone who reaches it
+launch any configured agent on the server (claude's Bash tool ≈ remote
+shell). Stick to SSH tunnel or Tailscale; reverse proxy with auth +
+TLS is out of scope for now.
 
 ## Configure
 

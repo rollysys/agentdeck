@@ -44,6 +44,10 @@ fn main() -> anyhow::Result<()> {
         print!("{TOP_HELP}");
         return Ok(());
     }
+    if matches!(args.get(1).map(String::as_str), Some("-V") | Some("--version")) {
+        println!("agentdeck {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -57,6 +61,7 @@ USAGE:
   agentdeck              start the web server on 127.0.0.1:7860
   agentdeck discover     scan claude history for new cwds to configure
                          (run `agentdeck discover --help` for flags)
+  agentdeck --version    print version and exit
   agentdeck --help       print this message
 ";
 
