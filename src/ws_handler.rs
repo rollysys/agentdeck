@@ -13,6 +13,7 @@
 
 use crate::profile;
 use crate::pty::{spawn_for_profile, PtySession, SpawnMode};
+use crate::running::RunningCounter;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use portable_pty::PtySize;
@@ -58,7 +59,11 @@ enum ServerControl {
     Exit,
 }
 
-pub async fn handle(socket: WebSocket, params: SpawnParams) {
+pub async fn handle(
+    socket: WebSocket,
+    params: SpawnParams,
+    running: Arc<RunningCounter>,
+) {
     let (mut ws_tx, mut ws_rx) = socket.split();
 
     // Resolve profile.
@@ -70,6 +75,11 @@ pub async fn handle(socket: WebSocket, params: SpawnParams) {
             return;
         }
     };
+
+    // RAII increment: dropped at the end of `handle` no matter how we
+    // got there (clean close, send error, panic). This keeps
+    // `/api/status`'s `running` count honest.
+    let _running_guard = running.track(&prof.name);
 
     // Spawn the pty on a blocking thread — portable-pty does openpty/fork
     // synchronously and we don't want to stall the tokio scheduler.

@@ -87,6 +87,26 @@ impl SessionIndex {
         *self.ready.read().await
     }
 
+    /// Latest `last_active_ts` across sessions that belong to this profile,
+    /// using the same filtering rules as `for_profile`. Cheap — no sort,
+    /// no truncate, no cloning of the list.
+    pub async fn last_active_for_profile(&self, profile: &Profile) -> Option<u64> {
+        let list = self.list.read().await;
+        let target_agent = core_agent(profile.agent);
+        let cwd_scoped = !matches!(profile.agent, AgentKind::Hermes);
+        list.iter()
+            .filter(|s| s.agent == target_agent)
+            .filter(|s| {
+                !cwd_scoped
+                    || s.cwd
+                        .as_deref()
+                        .map(|c| c == profile.cwd)
+                        .unwrap_or(false)
+            })
+            .map(|s| s.last_active_ts)
+            .max()
+    }
+
     pub async fn for_profile(&self, profile: &Profile) -> SessionsResponse {
         let list = self.list.read().await;
         let target_agent = core_agent(profile.agent);

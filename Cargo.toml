@@ -22,6 +22,7 @@ anyhow = "1"
 dirs = "5"
 portable-pty = "0.9"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+chrono = "0.4"
 # auditui-core lives in the auditui workspace. cargo fetches the repo and
 # resolves `auditui-core` to the `core/` workspace member automatically.
 auditui-core = { git = "https://github.com/rollysys/auditui", branch = "main" }
